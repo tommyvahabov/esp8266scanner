@@ -437,6 +437,8 @@ volatile bool deauthBroadcast = false;  // if true, destination is broadcast (al
 volatile uint32_t deauthIntervalMs = 100; // default ~10 pps
 volatile uint32_t deauthEndAtMs = 0;      // 0 = no auto stop
 
+Ticker deauthTicker;
+
 // Add this function to send deauthentication frames
 void sendDeauth() {
   if (!deauthTestActive) return;
@@ -485,7 +487,6 @@ volatile uint32_t sniffedPacketCount = 0;
 volatile uint32_t deauthCount = 0;
 volatile uint32_t disassocCount = 0;
 
-Ticker deauthTicker;
 
 // -------------------- Injection/KARMA/Utilization state --------------------
 volatile bool karmaActive = false;
