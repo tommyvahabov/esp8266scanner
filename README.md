@@ -63,8 +63,8 @@ Notes and Limitations
 - Output is throttled to avoid watchdog resets.
 - Channel hopping default is 4 hops/sec across channels 1–13.
 - Promiscuous APIs are part of the ESP8266 SDK and can change across core versions.
-- Deauth/Disassoc detection is passive only; this firmware does not transmit frames.
-- **NEW**: Deauthentication testing can actively transmit frames for testing purposes.
+ - Detection is passive by default; transmission is disabled unless explicitly enabled for testing.
+ - **NEW**: Deauthentication testing can actively transmit frames for testing purposes when enabled.
 
 Deauthentication Testing
 ------------------------
@@ -76,6 +76,21 @@ The firmware now includes active deauthentication frame testing capabilities:
 - **Start/Stop**: Control the deauthentication test via web UI
 
 **⚠️ WARNING**: This feature is for testing purposes only. Only use on networks you own or have explicit permission to test. Deauthentication attacks can disrupt network connectivity and may be illegal in many jurisdictions.
+
+Aggressive Mode (Active Tests)
+------------------------------
+By default the firmware only observes traffic. You can opt-in to aggressive behavior for authorized tests:
+
+1. Open the web UI at `http://192.168.4.1/` → Tools → Deauth/KARMA.
+2. Deauth Test:
+   - Enter the AP BSSID.
+   - Either enter a target client MAC, or enable Broadcast to target all clients.
+   - Click Start to begin sending deauth frames (~10 packets/sec). Click Stop to end.
+3. Disassociation (single shot):
+   - Call: `/inject/disassoc?bssid=AA:BB:CC:DD:EE:FF&dst=11:22:33:44:55:66&reason=1`.
+4. For better effect, lock the channel to the AP first (Dashboard → Set CH) before starting tests.
+
+Use these features responsibly and only on networks you own or have explicit authorization to test.
 
 Legal
 -----
