@@ -26,6 +26,18 @@ Quick Start (PlatformIO)
 
    The monitor should open at 115200 baud.
 
+Quick Start (Arduino IDE)
+-------------------------
+If you prefer the Arduino IDE:
+
+1. Install the ESP8266 core for Arduino IDE.
+   - In Arduino IDE, open Preferences and add this Boards Manager URL: `https://arduino.esp8266.com/stable/package_esp8266com_index.json`.
+   - Open Tools → Board → Boards Manager…, search for "ESP8266 by ESP8266 Community" and install.
+2. Open `esp8266_wifi_scan_sniffer/esp8266_wifi_scan_sniffer.ino` in the Arduino IDE.
+3. Select the board: Tools → Board → ESP8266 Boards → "Generic ESP8266 Module".
+4. Select the correct serial Port under Tools → Port.
+5. Upload the sketch, then open the Serial Monitor at 115200 baud.
+
 Serial Commands
 ---------------
 - `s`: Scan networks
