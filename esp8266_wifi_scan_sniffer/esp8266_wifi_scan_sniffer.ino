@@ -769,6 +769,9 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
       const bc = !!j.deauthBroadcast;
       document.getElementById('broadcastDeauth').checked = bc;
       document.getElementById('deauthTarget').disabled = bc;
+      if (document.getElementById('deauthRateNow')) {
+        document.getElementById('deauthRateNow').textContent = j.deauthRatePps || 0;
+      }
       if (deauthActive) {
         document.getElementById('deauthTarget').value = j.deauthTarget || '';
         document.getElementById('deauthBssid').value = j.deauthBssid || '';
@@ -824,9 +827,11 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
       const target = document.getElementById('deauthTarget').value;
       const bssid = document.getElementById('deauthBssid').value;
       const broadcast = document.getElementById('broadcastDeauth').checked;
+      const rate = (document.getElementById('deauthRate') && document.getElementById('deauthRate').value) ? document.getElementById('deauthRate').value : '10';
+      const duration = (document.getElementById('deauthDuration') && document.getElementById('deauthDuration').value) ? document.getElementById('deauthDuration').value : '0';
       if (!bssid) { alert('Enter BSSID'); return; }
       if (!broadcast && !target) { alert('Enter target MAC or enable Broadcast'); return; }
-      const url = '/deauth/start?bssid=' + encodeURIComponent(bssid) + (broadcast ? '&broadcast=1' : ('&target=' + encodeURIComponent(target)));
+      const url = '/deauth/start?bssid=' + encodeURIComponent(bssid) + (broadcast ? '&broadcast=1' : ('&target=' + encodeURIComponent(target))) + '&rate=' + encodeURIComponent(rate) + '&duration=' + encodeURIComponent(duration);
       await call(url); status();
     }
     async function stopDeauth() { await call('/deauth/stop'); status(); }
@@ -917,8 +922,15 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
             <input id="deauthBssid" type="text" placeholder="BSSID MAC (AA:BB:CC:DD:EE:FF)" />
             <label><input id="broadcastDeauth" type="checkbox" /> Broadcast</label>
           </div>
-          <div class="row"><button class="btn" onclick="startDeauth()">Start</button><button class="btn btn-danger" onclick="stopDeauth()">Stop</button>
-          <span class="pill">Status: <span id="deauthStatus">Inactive</span></span><span class="pill">Sent: <span id="deauthCount">0</span></span></div>
+          <div class="row">
+            <input id="deauthRate" type="number" min="1" max="100" value="10" placeholder="Rate (pps)" />
+            <input id="deauthDuration" type="number" min="0" max="3600000" value="0" placeholder="Duration ms (0=∞)" />
+            <button class="btn" onclick="startDeauth()">Start</button>
+            <button class="btn btn-danger" onclick="stopDeauth()">Stop</button>
+            <span class="pill">Status: <span id="deauthStatus">Inactive</span></span>
+            <span class="pill">Sent: <span id="deauthCount">0</span></span>
+            <span class="pill">Rate: <span id="deauthRateNow">0</span> pps</span>
+          </div>
         </div>
         <div class="card">
           <div class="row"><strong>KARMA Probe Responses</strong></div>
@@ -1096,7 +1108,8 @@ void setupHttpHandlers() {
       out += "\"mgmt\":"; out += String(g_aps[i].mgmtCount); out += ",";
       out += "\"ctrl\":"; out += String(g_aps[i].ctrlCount); out += ",";
       out += "\"data\":"; out += String(g_aps[i].dataCount); out += ",";
-      out += "\"clients\":"; out += String(g_aps[i].clientCount);
+      out += "\"clients\":"; out += String(g_aps[i].clientCount); out += ",";
+      out += "\"eapol\":"; out += String(g_aps[i].eapolCount);
       out += "}";
     }
     out += "],\"clients\":[";
@@ -1119,6 +1132,8 @@ void setupHttpHandlers() {
         if (p) out += ","; out += "\""; out += g_clients[i].pnl[p]; out += "\"";
       }
       out += "],\"roam\":"; out += String(g_clients[i].roamCount); out += ",";
+      out += "\"eapol\":"; out += String(g_clients[i].eapolCount); out += ",";
+      out += "\"handshake\":"; out += (g_clients[i].handshakeSeen ? "true" : "false"); out += ",";
       out += "\"channelHits\":[";
       for (int ch = 1; ch <= 14; ch++) { if (ch > 1) out += ","; out += String(g_clients[i].channelHits[ch]); }
       out += "]}";
