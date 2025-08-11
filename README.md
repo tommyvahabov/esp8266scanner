@@ -6,7 +6,7 @@ This project provides an ESP8266 firmware that can:
 - Scan nearby Wi‑Fi networks (channels, RSSI, encryption, BSSID, SSID)
 - Sniff 802.11 frames in promiscuous mode with channel hopping
 - Passively detect deauthentication and disassociation management frames
-- Built‑in SoftAP web UI at `http://192.168.4.1/` (SSID: `Magesium`, password: `Magesium`)
+- Built‑in SoftAP web UI at `http://192.168.4.1/` (SSID: `Magesium`, password: `M4ges1um`)
 - **NEW**: Active deauthentication frame testing capabilities
 
 Hardware
@@ -48,7 +48,7 @@ Serial Commands
 
 Web UI
 ------
-- After flashing, connect to the Wi‑Fi network `Magesium` (password: `Magesium`).
+- After flashing, connect to the Wi‑Fi network `Magesium` (password: `M4ges1um`).
 - Browse to `http://192.168.4.1/`.
 - Controls available:
   - Start/Stop sniffer

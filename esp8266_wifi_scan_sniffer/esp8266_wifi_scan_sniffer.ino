@@ -282,7 +282,7 @@ static void updateApFromMgmt(const WifiMacPacket *mp, const uint8_t *body, uint1
           char tmp[12];
           if (basic) snprintf(tmp, sizeof(tmp), "%.1f*", mbps);
           else snprintf(tmp, sizeof(tmp), "%.1f", mbps);
-          if (ap.rates[0] != '\\0') strncat(ap.rates, ",", sizeof(ap.rates) - strlen(ap.rates) - 1);
+          if (ap.rates[0] != '\0') strncat(ap.rates, ",", sizeof(ap.rates) - strlen(ap.rates) - 1);
           strncat(ap.rates, tmp, sizeof(ap.rates) - strlen(ap.rates) - 1);
         }
         break;
@@ -309,7 +309,7 @@ static void updateApFromMgmt(const WifiMacPacket *mp, const uint8_t *body, uint1
           bool basic = (r & 0x80) != 0;
           float mbps = (r & 0x7F) * 0.5f;
           char tmp[12];
-          if (ap.rates[0] != '\\0') strncat(ap.rates, ",", sizeof(ap.rates) - strlen(ap.rates) - 1);
+          if (ap.rates[0] != '\0') strncat(ap.rates, ",", sizeof(ap.rates) - strlen(ap.rates) - 1);
           snprintf(tmp, sizeof(tmp), "%.1f", mbps);
           strncat(ap.rates, tmp, sizeof(ap.rates) - strlen(ap.rates) - 1);
         }
